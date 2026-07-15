@@ -73,3 +73,7 @@ https://pmc.ncbi.nlm.nih.gov/search/?term=dataset
 [tcga_subtype_visual.py](https://github.com/user-attachments/files/30032914/tcga_subtype_visual.py)\
 [tcga_subtype_classification.py](https://github.com/user-attachments/files/30032913/tcga_subtype_classification.py)\
 [tcga_clinical_methylation_analysis.py](https://github.com/user-attachments/files/30032911/tcga_clinical_methylation_analysis.py)
+
+# PPT
+[IBS ppt.pptx](https://github.com/user-attachments/files/30033102/IBS.ppt.pptx)
+
