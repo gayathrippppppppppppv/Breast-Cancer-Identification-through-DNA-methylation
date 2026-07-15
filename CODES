@@ -1,0 +1,1820 @@
+# All the python codes 
+import pandas as pd
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from joblib import dump
+
+# ==============================
+# Load TCGA ML dataset
+# ==============================
+DATA_PATH = "../results/methylation_ml_dataset.csv"
+data = pd.read_csv(DATA_PATH)
+
+X = data.drop(columns=["label", "sample"], errors="ignore")
+y = data["label"]
+
+print("📄 Loaded dataset:", X.shape)
+
+# ==============================
+# Train-test split
+# ==============================
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+# ==============================
+# Train SVM (THIS *IS* THE SVM)
+# ==============================
+model = SVC(kernel="linear", probability=True)
+model.fit(X_train, y_train)
+
+# ==============================
+# Save trained model
+# ==============================
+dump(model, "../results/svm_model.joblib")
+print("💾 SVM model saved")
+
+# ==============================
+# Save CpGs used during training
+# ==============================
+pd.Series(X.columns).to_csv(
+    "../results/train_cpgs.csv",
+    index=False,
+    header=False
+)
+print(f"💾 CpG list saved: {len(X.columns)} CpGs")
+
+# ==============================
+# Evaluate on TCGA test set
+# ==============================
+y_pred = model.predict(X_test)
+
+print("\n✅ Classification Report")
+print(classification_report(y_test, y_pred))
+
+# ==============================
+# SAVE TCGA TEST PREDICTIONS (CRITICAL)
+# ==============================
+tcga_test_predictions = pd.DataFrame({
+    "Sample_Index": X_test.index,
+    "True_Label": y_test.values,
+    "Predicted_Label": y_pred
+})
+
+tcga_test_predictions.to_csv(
+    "../results/tcga_test_predictions.csv",
+    index=False
+)
+
+print("💾 Saved TCGA test predictions → tcga_test_predictions.csv")
+
+import pandas as pd
+from scipy.stats import ttest_ind
+
+# ==============================
+# Load ML dataset
+# ==============================
+DATA_PATH = "../results/methylation_ml_dataset.csv"
+data = pd.read_csv(DATA_PATH)
+
+X = data.drop(columns=["label", "sample"], errors="ignore")
+y = data["label"]
+
+# ==============================
+# Separate classes
+# ==============================
+cancer = X[y == "Cancer"]
+normal = X[y == "Normal"]
+
+results = []
+
+for cpg in X.columns:
+    t, p = ttest_ind(
+        cancer[cpg],
+        normal[cpg],
+        nan_policy="omit"
+    )
+
+    results.append({
+        "CpG": cpg,
+        "Cancer_mean": cancer[cpg].mean(),
+        "Normal_mean": normal[cpg].mean(),
+        "Mean_diff": cancer[cpg].mean() - normal[cpg].mean(),
+        "p_value": p
+    })
+
+df = pd.DataFrame(results)
+df = df.sort_values("p_value")
+
+# ==============================
+# SAVE OUTPUT (THIS WAS MISSING)
+# ==============================
+OUTPUT_PATH = "../results/task1_statistical_validation.csv"
+df.to_csv(OUTPUT_PATH, index=False)
+
+print("✅ Statistical validation completed")
+print("💾 Saved to:", OUTPUT_PATH)
+print("\nTop significant CpGs:")
+print(df.head(10))
+
+import pandas as pd
+
+# ==============================
+# Paths
+# ==============================
+SIG_CPG_PATH = "../results/task1_statistical_validation.csv"
+ANNOT_PATH = "../dataset/GEO/humanmethylation450_15017482_v1-2.csv"
+OUT_PATH = "../results/task2_biological_annotation.csv"
+
+# ==============================
+# Load significant CpGs
+# ==============================
+sig = pd.read_csv(SIG_CPG_PATH)
+print(f"🧬 Significant CpGs loaded: {sig.shape}")
+
+# ==============================
+# Load Illumina 450K annotation
+# IMPORTANT: skip metadata rows
+# ==============================
+annot = pd.read_csv(
+    ANNOT_PATH,
+    skiprows=7,          # <-- THIS IS THE FIX
+    low_memory=False
+)
+
+print(f"📄 Annotation table loaded: {annot.shape}")
+
+# ==============================
+# Keep only useful columns
+# ==============================
+annot = annot[[
+    "IlmnID",
+    "UCSC_RefGene_Name",
+    "UCSC_RefGene_Group",
+    "Relation_to_UCSC_CpG_Island"
+]]
+
+annot.rename(columns={"IlmnID": "CpG"}, inplace=True)
+
+# ==============================
+# Merge CpGs with annotation
+# ==============================
+merged = sig.merge(annot, on="CpG", how="left")
+
+# ==============================
+# Save output
+# ==============================
+merged.to_csv(OUT_PATH, index=False)
+
+print("✅ Biological annotation completed")
+print("💾 Saved to:", OUT_PATH)
+
+print("\nTop annotated CpGs:")
+print(merged.head(10))
+
+import pandas as pd
+import gseapy as gp
+
+# ==============================
+# Paths
+# ==============================
+ANNOT_PATH = "../results/task2_biological_annotation.csv"
+OUT_PATH = "../results/task3_pathway_enrichment.csv"
+
+# ==============================
+# Load annotated CpGs
+# ==============================
+annot = pd.read_csv(ANNOT_PATH)
+print("📄 Annotation loaded:", annot.shape)
+
+# ==============================
+# Extract gene list
+# ==============================
+genes = (
+    annot["UCSC_RefGene_Name"]
+    .dropna()
+    .str.split(";")
+    .explode()
+    .unique()
+)
+
+genes = [g for g in genes if g != ""]
+print("🧬 Unique genes:", len(genes))
+
+# ==============================
+# Run pathway enrichment (KEGG)
+# ==============================
+enr = gp.enrichr(
+    gene_list=genes,
+    gene_sets="KEGG_2021_Human",
+    organism="Human",
+    outdir=None
+)
+
+# ==============================
+# Save results
+# ==============================
+results = enr.results.sort_values("Adjusted P-value")
+results.to_csv(OUT_PATH, index=False)
+
+print("✅ Pathway enrichment completed")
+print("💾 Saved to:", OUT_PATH)
+
+# ==============================
+# Show top pathways
+# ==============================
+print("\n🔬 Top enriched pathways:")
+print(results[["Term", "Adjusted P-value", "Genes"]].head(10))
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ==============================
+# Paths
+# ==============================
+STAT_PATH = "../results/task1_statistical_validation.csv"
+ANNOT_PATH = "../results/task2_biological_annotation.csv"
+PATHWAY_PATH = "../results/task3_pathway_enrichment.csv"
+ML_DATA_PATH = "../results/methylation_ml_dataset.csv"
+OUT_DIR = "../results/figures/"
+
+# ==============================
+# Load data
+# ==============================
+stat = pd.read_csv(STAT_PATH)
+annot = pd.read_csv(ANNOT_PATH)
+pathways = pd.read_csv(PATHWAY_PATH)
+ml = pd.read_csv(ML_DATA_PATH)
+
+# ==============================
+# TASK 4.1 – Volcano Plot
+# ==============================
+stat["-log10(p)"] = -np.log10(stat["p_value"])
+
+plt.figure(figsize=(8,6))
+plt.scatter(stat["Mean_diff"], stat["-log10(p)"], alpha=0.6)
+plt.axhline(-np.log10(0.05), linestyle="--")
+plt.xlabel("Mean Methylation Difference (Cancer – Normal)")
+plt.ylabel("-log10(p-value)")
+plt.title("Volcano Plot of Differentially Methylated CpGs")
+plt.tight_layout()
+plt.savefig(f"{OUT_DIR}/volcano_plot.png", dpi=300)
+plt.close()
+
+print("✅ Volcano plot saved")
+
+# ==============================
+# TASK 4.2 – Heatmap (Top 20 CpGs)
+# ==============================
+top_cpgs = stat.sort_values("p_value").head(20)["CpG"]
+
+heat_data = ml.set_index("sample")[top_cpgs]
+heat_data["Label"] = ml["label"].values
+
+heat_data = heat_data.sort_values("Label")
+heat_matrix = heat_data.drop(columns="Label")
+
+plt.figure(figsize=(10,6))
+sns.heatmap(heat_matrix, cmap="viridis", yticklabels=False)
+plt.title("Heatmap of Top 20 Differential CpGs")
+plt.xlabel("CpG Sites")
+plt.ylabel("Samples")
+plt.tight_layout()
+plt.savefig(f"{OUT_DIR}/top20_cpg_heatmap.png", dpi=300)
+plt.close()
+
+print("✅ Heatmap saved")
+
+# ==============================
+# TASK 4.3 – Pathway Enrichment Bar Plot
+# ==============================
+top_pathways = pathways.sort_values("Adjusted P-value").head(10)
+
+plt.figure(figsize=(8,5))
+plt.barh(
+    top_pathways["Term"],
+    -np.log10(top_pathways["Adjusted P-value"])
+)
+plt.xlabel("-log10 Adjusted P-value")
+plt.title("Top Enriched KEGG Pathways")
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.savefig(f"{OUT_DIR}/pathway_enrichment.png", dpi=300)
+plt.close()
+
+print("✅ Pathway enrichment plot saved")
+
+print("\n🎯 TASK 4 COMPLETED – All figures generated")
+
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+print("🚀 FAST TCGA Clinical + Methylation Analysis\n")
+
+# ==============================
+# 1️⃣ Load methylation
+# ==============================
+
+meth = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\dataset\methylation_cleaned.csv",
+    index_col=0
+)
+
+meth = meth.T
+print("Methylation shape:", meth.shape)
+
+# ==============================
+# 2️⃣ Load top CpGs used in training
+# ==============================
+
+train_cpgs = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\train_cpgs.csv",
+    header=None
+)[0].tolist()
+
+meth = meth[train_cpgs]
+print("Using top CpGs:", meth.shape)
+
+# ==============================
+# 3️⃣ Load clinical
+# ==============================
+
+clinical = pd.read_csv(
+    r"C:\Users\Shalini\Downloads\brca_tcga_clinical_data.tsv",
+    sep="\t"
+)
+
+clinical = clinical[[
+    "Sample ID",
+    "ER Status By IHC",
+    "PR status by ihc",
+    "HER2 fish status"
+]].copy()
+
+clinical.columns = ["sample", "ER", "PR", "HER2"]
+
+# ==============================
+# 4️⃣ Merge
+# ==============================
+
+meth["sample"] = meth.index
+merged = meth.merge(clinical, on="sample")
+
+print("Merged shape:", merged.shape)
+
+# ==============================
+# 5️⃣ Construct subtype
+# ==============================
+
+
+def assign_subtype(row):
+    if row["ER"] == "Negative" and row["PR"] == "Negative" and row["HER2"] == "Negative":
+        return "Basal"
+    elif row["ER"] == "Positive" and row["HER2"] == "Negative":
+        return "Luminal_A"
+    elif row["ER"] == "Positive" and row["HER2"] == "Positive":
+        return "Luminal_B"
+    elif row["ER"] == "Negative" and row["HER2"] == "Positive":
+        return "HER2_Enriched"
+    else:
+        return "Other"
+
+
+merged["Subtype"] = merged.apply(assign_subtype, axis=1)
+
+print("\nSubtype distribution:")
+print(merged["Subtype"].value_counts())
+
+# ==============================
+# 6️⃣ Scale + PCA
+# ==============================
+
+features = merged.drop(columns=["sample", "ER", "PR", "HER2", "Subtype"])
+
+features = features.fillna(features.mean())
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(features)
+
+pca = PCA(n_components=10, random_state=42)
+X_pca = pca.fit_transform(X_scaled)
+
+# ==============================
+# 7️⃣ KMeans
+# ==============================
+
+kmeans = KMeans(n_clusters=4, random_state=42)
+clusters = kmeans.fit_predict(X_pca)
+
+merged["Cluster"] = clusters
+
+print("\nSilhouette Score:", silhouette_score(X_pca, clusters))
+
+print("\nCluster vs Subtype:")
+print(pd.crosstab(merged["Cluster"], merged["Subtype"]))
+
+# ==============================
+# 8️⃣ PCA Plot
+# ==============================
+
+pca_2d = PCA(n_components=2, random_state=42)
+pca_result = pca_2d.fit_transform(X_scaled)
+
+plt.figure(figsize=(8, 6))
+sns.scatterplot(
+    x=pca_result[:, 0],
+    y=pca_result[:, 1],
+    hue=merged["Subtype"],
+    palette="tab10"
+)
+
+plt.title("TCGA Methylation (Top CpGs) by Clinical Subtype")
+plt.show()
+
+print("\n🔥 FAST Clinical Validation Complete")
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    classification_report
+)
+
+print("🚀 FINAL TCGA Subtype Validation (Basal vs Luminal)\n")
+
+# ==============================
+# 1️⃣ Load methylation
+# ==============================
+
+meth = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\dataset\methylation_cleaned.csv",
+    index_col=0
+)
+
+meth = meth.T
+
+# ==============================
+# 2️⃣ Use top CpGs
+# ==============================
+
+train_cpgs = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\train_cpgs.csv",
+    header=None
+)[0].tolist()
+
+meth = meth[train_cpgs]
+
+# ==============================
+# 3️⃣ Load clinical
+# ==============================
+
+clinical = pd.read_csv(
+    r"C:\Users\Shalini\Downloads\brca_tcga_clinical_data.tsv",
+    sep="\t"
+)
+
+clinical = clinical[[
+    "Sample ID",
+    "ER Status By IHC",
+    "PR status by ihc",
+    "HER2 fish status"
+]].copy()
+
+clinical.columns = ["sample", "ER", "PR", "HER2"]
+
+# ==============================
+# 4️⃣ Merge
+# ==============================
+
+meth["sample"] = meth.index
+merged = meth.merge(clinical, on="sample")
+
+# ==============================
+# 5️⃣ Assign subtype
+# ==============================
+
+
+def assign_subtype(row):
+    if row["ER"] == "Negative" and row["PR"] == "Negative" and row["HER2"] == "Negative":
+        return "Basal"
+    elif row["ER"] == "Positive" and row["HER2"] == "Negative":
+        return "Luminal_A"
+    elif row["ER"] == "Positive" and row["HER2"] == "Positive":
+        return "Luminal_B"
+    else:
+        return "Other"
+
+
+merged["Subtype"] = merged.apply(assign_subtype, axis=1)
+
+subset = merged[merged["Subtype"].isin(
+    ["Basal", "Luminal_A", "Luminal_B"])].copy()
+
+subset["label"] = subset["Subtype"].apply(
+    lambda x: 1 if x == "Basal" else 0
+)
+
+print("Class balance:")
+print(subset["label"].value_counts())
+
+# ==============================
+# 6️⃣ Prepare data
+# ==============================
+
+X = subset[train_cpgs].fillna(subset[train_cpgs].mean())
+y = subset["label"]
+
+# ==============================
+# 7️⃣ Pipeline
+# ==============================
+
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("svm", SVC(kernel="linear", probability=True))
+])
+
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# ==============================
+# 8️⃣ Cross-validated predictions
+# ==============================
+
+y_pred = cross_val_predict(pipeline, X, y, cv=cv)
+y_prob = cross_val_predict(pipeline, X, y, cv=cv, method="predict_proba")[:, 1]
+
+# ==============================
+# 9️⃣ Metrics
+# ==============================
+
+accuracy = accuracy_score(y, y_pred)
+auc = roc_auc_score(y, y_prob)
+
+print("\nCross-Validated Performance")
+print("Accuracy:", round(accuracy, 4))
+print("ROC AUC :", round(auc, 4))
+
+print("\nClassification Report:")
+print(classification_report(y, y_pred))
+
+# ==============================
+# 🔟 Confusion Matrix
+# ==============================
+
+cm = confusion_matrix(y, y_pred)
+
+tn, fp, fn, tp = cm.ravel()
+
+print("Confusion Matrix:")
+print(cm)
+
+basal_sensitivity = tp / (tp + fn)
+print("\nBasal Sensitivity (Recall):", round(basal_sensitivity, 4))
+
+# ==============================
+# 📊 Cross-Validated ROC Curve
+# ==============================
+
+fpr, tpr, _ = roc_curve(y, y_prob)
+
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, label=f"AUC = {auc:.3f}")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("Cross-Validated ROC (Basal vs Luminal)")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+print("\n🔥 Final Clinical Validation Complete")
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    precision_recall_curve
+)
+
+print("🚀 Generating Advanced Subtype Visualizations\n")
+
+# ==============================
+# Load methylation
+# ==============================
+
+meth = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\dataset\methylation_cleaned.csv",
+    index_col=0
+)
+
+meth = meth.T
+
+train_cpgs = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\train_cpgs.csv",
+    header=None
+)[0].tolist()
+
+meth = meth[train_cpgs]
+
+# ==============================
+# Load clinical
+# ==============================
+
+clinical = pd.read_csv(
+    r"C:\Users\Shalini\Downloads\brca_tcga_clinical_data.tsv",
+    sep="\t"
+)
+
+clinical = clinical[[
+    "Sample ID",
+    "ER Status By IHC",
+    "PR status by ihc",
+    "HER2 fish status"
+]].copy()
+
+clinical.columns = ["sample", "ER", "PR", "HER2"]
+
+meth["sample"] = meth.index
+merged = meth.merge(clinical, on="sample")
+
+
+def assign_subtype(row):
+    if row["ER"] == "Negative" and row["PR"] == "Negative" and row["HER2"] == "Negative":
+        return "Basal"
+    elif row["ER"] == "Positive" and row["HER2"] == "Negative":
+        return "Luminal"
+    else:
+        return "Other"
+
+
+merged["Subtype"] = merged.apply(assign_subtype, axis=1)
+
+subset = merged[merged["Subtype"].isin(["Basal", "Luminal"])].copy()
+subset["label"] = subset["Subtype"].apply(lambda x: 1 if x == "Basal" else 0)
+
+X = subset[train_cpgs].fillna(subset[train_cpgs].mean())
+y = subset["label"]
+
+# ==============================
+# Model
+# ==============================
+
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("svm", SVC(kernel="linear", probability=True, class_weight="balanced"))
+])
+
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+y_pred = cross_val_predict(pipeline, X, y, cv=cv)
+y_prob = cross_val_predict(pipeline, X, y, cv=cv, method="predict_proba")[:, 1]
+
+# ==============================
+# 1️⃣ Confusion Matrix Heatmap
+# ==============================
+
+cm = confusion_matrix(y, y_pred)
+
+plt.figure(figsize=(5, 4))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["Luminal", "Basal"],
+            yticklabels=["Luminal", "Basal"])
+plt.title("Confusion Matrix (Basal vs Luminal)")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.tight_layout()
+plt.show()
+
+# ==============================
+# 2️⃣ ROC Curve
+# ==============================
+
+fpr, tpr, _ = roc_curve(y, y_prob)
+auc = roc_auc_score(y, y_prob)
+
+plt.figure(figsize=(5, 4))
+plt.plot(fpr, tpr, label=f"AUC = {auc:.3f}")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("Cross-Validated ROC")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# ==============================
+# 3️⃣ Precision-Recall Curve
+# ==============================
+
+precision, recall, _ = precision_recall_curve(y, y_prob)
+
+plt.figure(figsize=(5, 4))
+plt.plot(recall, precision)
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.title("Precision-Recall Curve")
+plt.tight_layout()
+plt.show()
+
+# ==============================
+# 4️⃣ Probability Distribution
+# ==============================
+
+plt.figure(figsize=(6, 4))
+sns.histplot(y_prob[y == 1], color="red", label="Basal", kde=True)
+sns.histplot(y_prob[y == 0], color="blue", label="Luminal", kde=True)
+plt.legend()
+plt.title("Predicted Probability Distribution")
+plt.xlabel("Predicted Basal Probability")
+plt.tight_layout()
+plt.show()
+
+# ==============================
+# 5️⃣ Feature Importance
+# ==============================
+
+pipeline.fit(X, y)
+coef = pipeline.named_steps["svm"].coef_[0]
+
+feature_importance = pd.DataFrame({
+    "CpG": train_cpgs,
+    "Weight": coef
+}).sort_values("Weight", key=abs, ascending=False).head(15)
+
+plt.figure(figsize=(6, 5))
+sns.barplot(x="Weight", y="CpG", data=feature_importance)
+plt.title("Top 15 CpGs Driving Subtype Separation")
+plt.tight_layout()
+plt.show()
+
+print("\n🔥 Visualizations Complete")
+
+import pandas as pd
+from joblib import load
+
+# ==============================
+# Paths
+# ==============================
+GEO_PATH = "../dataset/GEO/GSE60185_series_matrix.txt"
+MODEL_PATH = "../results/svm_model.joblib"
+CPG_PATH = "../results/train_cpgs.csv"
+
+# ==============================
+# Load GEO
+# ==============================
+print("📥 Loading GEO data...")
+geo_raw = pd.read_csv(
+    GEO_PATH,
+    sep="\t",
+    comment="!",
+    index_col=0
+)
+
+print("Raw GEO shape:", geo_raw.shape)
+
+# ==============================
+# Transpose → samples × CpGs
+# ==============================
+geo = geo_raw.T
+geo = geo.loc[:, geo.columns.str.startswith("cg")]
+geo = geo.apply(pd.to_numeric, errors="coerce")
+
+# ==============================
+# Load training CpGs
+# ==============================
+train_cpgs = pd.read_csv(CPG_PATH, header=None)[0].tolist()
+print("🧬 CpGs expected:", len(train_cpgs))
+
+# ==============================
+# ALIGN FEATURES (THIS IS THE FIX)
+# ==============================
+geo = geo.reindex(columns=train_cpgs, fill_value=0)
+print("✅ GEO aligned shape:", geo.shape)
+
+# ==============================
+# Load model & predict
+# ==============================
+model = load(MODEL_PATH)
+predictions = model.predict(geo)
+
+# ==============================
+# Save output
+# ==============================
+out = pd.DataFrame({
+    "Sample": geo.index,
+    "Prediction": predictions
+})
+
+out.to_csv("../results/geo_predictions.csv", index=False)
+
+print("\n📊 GEO Prediction Counts")
+print(out["Prediction"].value_counts())
+print("💾 Saved: geo_predictions.csv")
+
+import pandas as pd
+import numpy as np
+from joblib import load
+from sklearn.metrics import classification_report, confusion_matrix
+
+# ==============================
+# Paths
+# ==============================
+GEO_PATH = "../dataset/GEO/GSE60185_series_matrix.txt"
+MODEL_PATH = "../results/svm_model.joblib"
+CPG_PATH = "../results/common_cpgs.csv"
+
+# ==============================
+# Load CpGs used by TCGA model
+# ==============================
+cpgs = pd.read_csv(CPG_PATH, header=None)[0].tolist()
+
+# KEEP ONLY CpG probes
+cpgs = [c for c in cpgs if c.startswith("cg")]
+
+print(f"🧬 CpGs loaded: {len(cpgs)}")
+
+# ==============================
+# Load GEO methylation data
+# ==============================
+print("📥 Loading GEO data...")
+geo_raw = pd.read_csv(
+    GEO_PATH,
+    sep="\t",
+    comment="!",
+    index_col=0
+)
+
+# Transpose → samples × CpGs
+geo = geo_raw.T
+
+# ==============================
+# Align CpGs (INTERSECTION)
+# ==============================
+available_cpgs = list(set(cpgs) & set(geo.columns))
+geo = geo[available_cpgs]
+
+print(f"✅ GEO CpGs matched: {len(available_cpgs)}")
+
+# ==============================
+# Load trained SVM model
+# ==============================
+model = load(MODEL_PATH)
+print("🤖 Model loaded")
+
+# ==============================
+# Predict GEO samples
+# ==============================
+predictions = model.predict(geo)
+
+geo_results = pd.DataFrame({
+    "Sample": geo.index,
+    "Predicted_Label": predictions
+})
+
+# ==============================
+# Extract Phenotype Labels
+# ==============================
+print("🧬 Extracting phenotype labels...")
+
+meta = pd.read_csv(GEO_PATH, sep="\t", header=None)
+
+phenotype_lines = meta[0].str.contains("disease state", case=False, na=False)
+phenotypes = meta[phenotype_lines][0].values
+
+labels = []
+for p in phenotypes:
+    if "normal" in p.lower():
+        labels.append("Normal")
+    else:
+        labels.append("Cancer")
+
+geo_results["True_Label"] = labels[:len(geo_results)]
+
+# ==============================
+# Evaluation
+# ==============================
+print("\n📊 CONFUSION MATRIX")
+print(confusion_matrix(
+    geo_results["True_Label"],
+    geo_results["Predicted_Label"],
+    labels=["Cancer", "Normal"]
+))
+
+print("\n📈 CLASSIFICATION REPORT")
+print(classification_report(
+    geo_results["True_Label"],
+    geo_results["Predicted_Label"]
+))
+
+# ==============================
+# Save results
+# ==============================
+geo_results.to_csv("../results/geo_validation_with_phenotype.csv", index=False)
+print("💾 Validation results saved")
+
+import pandas as pd
+from joblib import load
+from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+
+print("🚀 Starting external validation...")
+
+# ==========================================
+# 1️⃣ LOAD TRAINED MODEL
+# ==========================================
+print("📦 Loading trained SVM model...")
+model = load(r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\svm_model.joblib")
+print("✅ Model loaded")
+
+# ==========================================
+# 2️⃣ LOAD TRAINED CpG LIST
+# ==========================================
+print("📦 Loading training CpGs...")
+selected_cpgs = set(
+    pd.read_csv(
+        r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\train_cpgs.csv",
+        header=None
+    )[0]
+)
+print(f"✅ {len(selected_cpgs)} CpGs loaded")
+
+# ==========================================
+# 3️⃣ LOAD META DATA
+# ==========================================
+print("📦 Loading meta data...")
+meta = pd.read_csv(r"C:\GEO\GSE287331_meta.csv")
+
+meta = meta[meta["Sample Region"].isin(["TU", "HDB"])].copy()
+meta["Label"] = meta["Sample Region"].map({"TU": 1, "HDB": 0})
+
+meta = meta.set_index("IDAT")
+sample_ids = set(meta.index)
+
+print("📊 Samples selected:", len(sample_ids))
+
+# ==========================================
+# 4️⃣ LOAD BETA FILE (ONLY REQUIRED COLUMNS)
+# ==========================================
+print("⚡ Reading header...")
+header = pd.read_csv(
+    r"C:\GEO\GSE287331_betas_processed.csv",
+    nrows=0
+)
+
+all_columns = header.columns.tolist()
+
+# Keep CpG column + relevant samples only
+use_columns = [all_columns[0]] + [
+    col for col in all_columns[1:] if col in sample_ids
+]
+
+print("⚡ Loading required columns only...")
+betas = pd.read_csv(
+    r"C:\GEO\GSE287331_betas_processed.csv",
+    index_col=0,
+    usecols=use_columns
+)
+
+print("⚡ Filtering to trained CpGs...")
+betas_filtered = betas.loc[
+    betas.index.intersection(selected_cpgs)
+]
+
+print("✅ CpGs matched:", betas_filtered.shape[0])
+
+# ==========================================
+# 5️⃣ MATCH SAMPLES
+# ==========================================
+common_samples = list(
+    set(betas_filtered.columns).intersection(sample_ids)
+)
+
+betas_filtered = betas_filtered[common_samples]
+meta = meta.loc[common_samples]
+
+X_external = betas_filtered.T
+y_external = meta["Label"]
+
+print("📊 Final matrix shape:", X_external.shape)
+
+# ==========================================
+# 6️⃣ PREDICT
+# ==========================================
+print("🤖 Running predictions...")
+
+pred = model.predict(X_external)
+prob = model.predict_proba(X_external)[:, 1]
+
+accuracy = accuracy_score(y_external, pred)
+auc = roc_auc_score(y_external, prob)
+
+print("\n==============================")
+print("🧪 EXTERNAL VALIDATION RESULTS")
+print("==============================")
+print("Samples:", len(y_external))
+print("Accuracy:", round(accuracy, 4))
+print("AUC:", round(auc, 4))
+print("\nClassification Report:\n")
+print(classification_report(y_external, pred))
+
+print("✅ Done.")
+
+import pandas as pd
+from joblib import load
+import numpy as np
+
+print("🚀 Starting TNBC external validation...")
+
+# ===============================
+# 1️⃣ Load trained TCGA model
+# ===============================
+model = load(r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\svm_model.joblib")
+print("✅ Model loaded")
+
+# ===============================
+# 2️⃣ Load trained CpGs (ORDER MATTERS)
+# ===============================
+train_cpgs = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\train_cpgs.csv",
+    header=None
+)[0].tolist()
+
+print("✅ Loaded", len(train_cpgs), "training CpGs")
+
+# ===============================
+# 3️⃣ Load EPIC V1
+# ===============================
+print("📦 Loading EPIC V1...")
+v1 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V1.txt",
+    sep="\t",
+    index_col=0
+)
+
+# Remove detection p-values
+v1 = v1.loc[:, ~v1.columns.str.contains("Detection_Pval")]
+
+# Clean CpG names
+v1.index = v1.index.astype(str).str.split("_").str[0]
+
+# Remove duplicate CpGs if any
+v1 = v1[~v1.index.duplicated(keep="first")]
+
+print("V1 shape:", v1.shape)
+
+# ===============================
+# 4️⃣ Load EPIC V2
+# ===============================
+print("📦 Loading EPIC V2...")
+v2 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V2_CpGnameChange.txt",
+    sep="\t",
+    index_col=0
+)
+
+v2 = v2.loc[:, ~v2.columns.str.contains("Detection_Pval")]
+
+# Clean CpG names
+v2.index = v2.index.astype(str).str.split("_").str[0]
+
+# Remove duplicates
+v2 = v2[~v2.index.duplicated(keep="first")]
+
+print("V2 shape:", v2.shape)
+
+# ===============================
+# 5️⃣ Merge datasets
+# ===============================
+print("🔗 Finding common CpGs between V1 and V2...")
+
+common_cpgs = v1.index.intersection(v2.index)
+print("Common CpGs:", len(common_cpgs))
+
+if len(common_cpgs) == 0:
+    print("❌ No common CpGs between V1 and V2. Stop.")
+    exit()
+
+v1 = v1.loc[common_cpgs]
+v2 = v2.loc[common_cpgs]
+
+merged = pd.concat([v1, v2], axis=1)
+print("Merged shape:", merged.shape)
+
+# ===============================
+# 6️⃣ Keep only training CpGs
+# ===============================
+print("🎯 Filtering to training CpGs...")
+
+matched_cpgs = [cpg for cpg in train_cpgs if cpg in merged.index]
+
+print("Matched training CpGs:", len(matched_cpgs))
+
+if len(matched_cpgs) == 0:
+    print("❌ No CpGs matched training model. Stop.")
+    exit()
+
+merged = merged.loc[matched_cpgs]
+
+# ===============================
+# 7️⃣ Transpose and align feature order
+# ===============================
+X_external = merged.T
+
+# Ensure exact same column order as training
+X_external = X_external[matched_cpgs]
+
+print("Final matrix shape:", X_external.shape)
+
+# ===============================
+# 8️⃣ Predict
+# ===============================
+print("🤖 Predicting...")
+
+pred = model.predict(X_external)
+prob = model.predict_proba(X_external)[:, 1]
+
+tumor_rate = np.mean(pred)
+
+print("\n==============================")
+print("🧪 TNBC EXTERNAL VALIDATION")
+print("==============================")
+print("Total samples:", len(pred))
+print("Predicted Tumor (%):", round(tumor_rate * 100, 2), "%")
+print("Mean Tumor Probability:", round(np.mean(prob), 4))
+print("==============================")
+
+print("✅ Done.")
+
+import pandas as pd
+
+# ===============================
+# FILE PATHS (HARD-CODED, SAFE)
+# ===============================
+CLINICAL_PATH = r"C:\Users\Shalini\Desktop\IBS2_PROJECT\dataset\clinical"
+METHYLATION_PATH = r"C:\Users\Shalini\Desktop\IBS2_PROJECT\dataset\methylation_450k"
+
+# ===============================
+# LOAD CLINICAL DATA
+# ===============================
+clinical = pd.read_csv(CLINICAL_PATH, sep="\t")
+print("✅ Clinical data loaded")
+print("Clinical shape:", clinical.shape)
+print(clinical.head())
+
+# ===============================
+# LOAD METHYLATION DATA
+# ===============================
+methylation = pd.read_csv(METHYLATION_PATH, sep="\t")
+print("\n✅ Methylation data loaded")
+print("Methylation shape:", methylation.shape)
+print(methylation.iloc[:5, :5])
+
+# ===============================
+# CLEAN SAMPLE IDS
+# ===============================
+methylation.columns = methylation.columns.str.replace(".", "-", regex=False)
+clinical["sampleID"] = clinical["sampleID"].str.slice(0, 15)
+
+# ===============================
+# MATCH SAMPLES
+# ===============================
+common_samples = set(methylation.columns[1:]).intersection(
+    set(clinical["sampleID"]))
+print("\n🔗 Matched samples:", len(common_samples))
+
+# ===============================
+# FILTER DATA
+# ===============================
+methylation_filtered = methylation[["sample"] + list(common_samples)]
+clinical_filtered = clinical[clinical["sampleID"].isin(common_samples)]
+
+print("\n🎯 Final shapes:")
+print("Methylation:", methylation_filtered.shape)
+print("Clinical:", clinical_filtered.shape)
+
+import pandas as pd
+
+# Load TCGA CpGs
+tcga = pd.read_csv("../results/methylation_top200.csv")
+tcga_cpgs = set(tcga.columns[1:])
+
+# Load GEO data (just CpG names)
+geo = pd.read_csv(
+    "../dataset/GEO/GSE60185_series_matrix.txt",
+    sep="\t",
+    comment="!",
+    index_col=0
+)
+geo_cpgs = set(geo.index)
+
+# Intersection
+common = sorted(tcga_cpgs.intersection(geo_cpgs))
+
+print(f"✅ Common CpGs found: {len(common)}")
+
+pd.DataFrame(common, columns=["CpG"]).to_csv(
+    "../results/common_cpgs.csv",
+    index=False
+)
+
+import pandas as pd
+
+print("🔎 Finding common CpGs between TCGA and GSE290981...")
+
+# Load TCGA ML dataset
+tcga = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\methylation_ml_dataset.csv"
+)
+
+tcga_cpgs = set(tcga.columns) - {"label", "sample"}
+
+print("TCGA CpGs:", len(tcga_cpgs))
+
+# Load V1
+v1 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V1.txt",
+    sep="\t",
+    index_col=0
+)
+
+v1 = v1.loc[:, ~v1.columns.str.contains("Detection_Pval")]
+v1.index = v1.index.astype(str).str.split("_").str[0]
+
+# Load V2
+v2 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V2_CpGnameChange.txt",
+    sep="\t",
+    index_col=0
+)
+
+v2 = v2.loc[:, ~v2.columns.str.contains("Detection_Pval")]
+v2.index = v2.index.astype(str).str.split("_").str[0]
+
+# Find common CpGs in GSE
+gse_cpgs = set(v1.index).intersection(set(v2.index))
+
+print("GSE CpGs:", len(gse_cpgs))
+
+# Find overlap with TCGA
+common_cpgs = list(tcga_cpgs.intersection(gse_cpgs))
+
+print("Common CpGs:", len(common_cpgs))
+
+# Save list
+pd.Series(common_cpgs).to_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\common_cpgs_tcga_gse290981.csv",
+    index=False,
+    header=False
+)
+
+print("💾 Saved common CpGs list")
+
+import pandas as pd
+
+# ==============================
+# PATHS
+# ==============================
+GEO_MATRIX = "../dataset/GEO/GSE60185_series_matrix.txt"
+PRED_PATH = "../results/geo_predictions.csv"
+OUT_PATH = "../results/geo_phenotype_evaluation.csv"
+
+# ==============================
+# 1️⃣ EXTRACT GEO PHENOTYPES
+# ==============================
+print("📥 Reading GEO metadata...")
+
+with open(GEO_MATRIX, "r") as f:
+    lines = f.readlines()
+
+# Extract GSM IDs
+gsm_line = [l for l in lines if l.startswith("!Sample_geo_accession")][0]
+gsm_ids = gsm_line.strip().split("\t")[1:]
+
+# Extract phenotype lines
+pheno_lines = [
+    l for l in lines
+    if l.startswith("!Sample_characteristics_ch1")
+]
+
+phenotypes = []
+
+for i in range(len(gsm_ids)):
+    combined = " ".join([p.split("\t")[i+1].lower() for p in pheno_lines])
+
+    if "normal" in combined:
+        phenotypes.append("Normal")
+    elif "dcis" in combined:
+        phenotypes.append("DCIS")
+    elif "invasive" in combined or "carcinoma" in combined:
+        phenotypes.append("Invasive")
+    else:
+        phenotypes.append("Unknown")
+
+pheno_df = pd.DataFrame({
+    "Sample": gsm_ids,
+    "Phenotype": phenotypes
+})
+
+print("\n🧬 GEO Phenotype Counts")
+print(pheno_df["Phenotype"].value_counts())
+
+# ==============================
+# 2️⃣ LOAD GEO PREDICTIONS
+# ==============================
+pred = pd.read_csv(PRED_PATH)
+
+# ==============================
+# 3️⃣ MERGE CORRECTLY (GSM IDs)
+# ==============================
+merged = pred.merge(pheno_df, on="Sample", how="inner")
+
+print(f"\n🔗 Merged samples: {merged.shape[0]}")
+
+# ==============================
+# 4️⃣ PHENOTYPE VS PREDICTION
+# ==============================
+summary = pd.crosstab(
+    merged["Phenotype"],
+    merged["Prediction"],
+    normalize="index"
+) * 100
+
+print("\n📊 Phenotype vs Prediction (%)")
+print(summary.round(2))
+
+# ==============================
+# 5️⃣ SAVE OUTPUT
+# ==============================
+merged.to_csv(OUT_PATH, index=False)
+print(f"\n💾 Saved evaluation to: {OUT_PATH}")
+
+import pandas as pd
+import numpy as np
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from joblib import dump
+
+print("🚀 STARTING HARMONIZED TCGA → TNBC PIPELINE")
+
+# ======================================================
+# 1️⃣ LOAD TCGA DATA
+# ======================================================
+print("\n📦 Loading TCGA dataset...")
+tcga = pd.read_csv(
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\methylation_ml_dataset.csv"
+)
+
+tcga_cpgs = list(set(tcga.columns) - {"label", "sample"})
+print("TCGA CpGs:", len(tcga_cpgs))
+
+# ======================================================
+# 2️⃣ LOAD GSE290981 (V1 + V2)
+# ======================================================
+print("\n📦 Loading GSE290981 V1...")
+v1 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V1.txt",
+    sep="\t",
+    index_col=0
+)
+
+v1 = v1.loc[:, ~v1.columns.str.contains("Detection_Pval")]
+v1.index = v1.index.astype(str).str.split("_").str[0]
+print("V1 shape:", v1.shape)
+
+print("\n📦 Loading GSE290981 V2...")
+v2 = pd.read_csv(
+    r"C:\GEO\GSE290981_ProcessedData_LUepic_V2_CpGnameChange.txt",
+    sep="\t",
+    index_col=0
+)
+
+v2 = v2.loc[:, ~v2.columns.str.contains("Detection_Pval")]
+v2.index = v2.index.astype(str).str.split("_").str[0]
+print("V2 shape:", v2.shape)
+
+# ======================================================
+# 3️⃣ FIND COMMON CpGs
+# ======================================================
+print("\n🔎 Finding common CpGs...")
+gse_cpgs = set(v1.index).intersection(set(v2.index))
+common_cpgs = list(set(tcga_cpgs).intersection(gse_cpgs))
+
+print("Common CpGs between TCGA and GSE:", len(common_cpgs))
+
+if len(common_cpgs) == 0:
+    raise ValueError("❌ No overlapping CpGs found!")
+
+# ======================================================
+# 4️⃣ RETRAIN SVM USING COMMON CpGs
+# ======================================================
+print("\n🤖 Retraining SVM on harmonized CpGs...")
+
+X = tcga[common_cpgs]
+y = tcga["label"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+model = SVC(kernel="linear", probability=True)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+print("\n✅ TCGA INTERNAL PERFORMANCE")
+print(classification_report(y_test, y_pred))
+
+dump(
+    model,
+    r"C:\Users\Shalini\Desktop\IBS2_PROJECT\results\svm_model_harmonized.joblib"
+)
+print("💾 Saved harmonized SVM model")
+
+# ======================================================
+# 5️⃣ MERGE GSE V1 + V2
+# ======================================================
+print("\n🔗 Merging V1 + V2...")
+
+common_gse = v1.index.intersection(v2.index)
+merged = pd.concat(
+    [v1.loc[common_gse], v2.loc[common_gse]],
+    axis=1
+)
+
+print("Merged shape:", merged.shape)
+
+# Keep only harmonized CpGs
+merged = merged.loc[common_cpgs]
+
+# Transpose for prediction
+X_external = merged.T
+print("Final external matrix shape:", X_external.shape)
+
+# ======================================================
+# 6️⃣ EXTERNAL VALIDATION
+# ======================================================
+print("\n🧪 Running TNBC external validation...")
+
+pred = model.predict(X_external)
+prob = model.predict_proba(X_external)
+
+# Convert predictions to numeric (Cancer = 1)
+pred_numeric = (pred == "Cancer").astype(int)
+
+tumor_rate = np.mean(pred_numeric)
+
+# Find probability column for "Cancer"
+cancer_index = list(model.classes_).index("Cancer")
+mean_prob = np.mean(prob[:, cancer_index])
+
+print("\n==============================")
+print("🧬 TNBC EXTERNAL VALIDATION")
+print("==============================")
+print("Total TNBC samples:", len(pred))
+print("Predicted Tumor (%):", round(tumor_rate * 100, 2))
+print("Mean Tumor Probability:", round(mean_prob, 4))
+print("==============================")
+
+print("\n🔥 PIPELINE COMPLETE")
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load data
+data = pd.read_csv("../results/methylation_ml_dataset.csv")
+top = pd.read_csv("../results/top_cpg_importance.csv").head(20)["CpG"]
+
+# Subset
+heatmap_data = data.set_index("sample")[top]
+
+# Plot
+plt.figure(figsize=(10, 6))
+sns.heatmap(heatmap_data, cmap="viridis")
+plt.title("Top CpG Methylation Patterns")
+plt.tight_layout()
+plt.savefig("../results/figures/cpg_heatmap.png")
+plt.close()
+
+print("✅ Heatmap saved")
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import StandardScaler
+
+# Load data
+X = pd.read_csv("../results/methylation_top200.csv", index_col=0).T
+labels = pd.read_csv("../results/sample_labels.csv")
+
+# Merge
+data = X.merge(labels, left_index=True, right_on="sample")
+data = data.drop(columns=["sample"])
+
+y = data["label"]
+X = data.drop(columns=["label"])
+
+# Scale
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
+)
+
+# Train SVM
+model = SVC(kernel="linear")
+model.fit(X_train, y_train)
+
+# Predict
+y_pred = model.predict(X_test)
+
+print("✅ SVM Accuracy:", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+import pandas as pd
+import os
+
+BASE_DIR = os.path.abspath("..")
+RESULTS_DIR = os.path.join(BASE_DIR, "results")
+
+PCA_PATH = os.path.join(RESULTS_DIR, "pca_coordinates.csv")
+
+pca = pd.read_csv(PCA_PATH)
+
+print("\n📊 PCA FILE COLUMNS:")
+print(pca.columns.tolist())
+
+print("\n📌 First 5 rows:")
+print(pca.head())
+
+import os
+import pandas as pd
+import numpy as np
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+
+# =============================
+# Paths
+# =============================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS_DIR = os.path.join(BASE_DIR, "results")
+FIG_DIR = os.path.join(RESULTS_DIR, "figures")
+
+os.makedirs(FIG_DIR, exist_ok=True)
+
+METH_PATH = os.path.join(RESULTS_DIR, "methylation_cleaned.csv")
+
+# =============================
+# Load methylation
+# =============================
+if not os.path.exists(METH_PATH):
+    raise FileNotFoundError("❌ methylation_cleaned.csv not found in results/")
+
+meth = pd.read_csv(METH_PATH, index_col=0)
+print(f"✅ Loaded cleaned methylation: {meth.shape}")
+
+# =============================
+# Transpose for PCA (samples × features)
+# =============================
+X = meth.T
+print(f"🔄 PCA input shape (samples × CpGs): {X.shape}")
+
+# =============================
+# Standardization
+# =============================
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# =============================
+# PCA
+# =============================
+pca = PCA(n_components=10)
+X_pca = pca.fit_transform(X_scaled)
+
+# =============================
+# Save PCA coordinates
+# =============================
+pca_df = pd.DataFrame(
+    X_pca[:, :2],
+    columns=["PC1", "PC2"],
+    index=X.index
+)
+
+pca_df.to_csv(os.path.join(RESULTS_DIR, "pca_coordinates.csv"))
+
+# =============================
+# Plot PCA
+# =============================
+plt.figure(figsize=(7, 6))
+plt.scatter(pca_df["PC1"], pca_df["PC2"], s=10)
+plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.2f}%)")
+plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.2f}%)")
+plt.title("TCGA BRCA DNA Methylation PCA")
+plt.tight_layout()
+
+plt.savefig(os.path.join(FIG_DIR, "methylation_pca.png"), dpi=300)
+plt.close()
+
+print("📊 PCA completed")
+print("📁 Saved:")
+print(" - results/pca_coordinates.csv")
+print(" - results/figures/methylation_pca.png")
+
+import os
+import pandas as pd
+import numpy as np
+
+# =============================
+# Paths (FILES, not folders)
+# =============================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+METH_FILE = os.path.join(
+    BASE_DIR,
+    "dataset",
+    "methylation_450k"
+)
+
+RESULTS_DIR = os.path.join(BASE_DIR, "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# =============================
+# Load methylation file
+# =============================
+meth = pd.read_csv(METH_FILE, sep="\t", index_col=0)
+print(f"✅ Loaded methylation data: {meth.shape}")
+
+# =============================
+# Step 1: Remove CpGs with >20% missing values
+# =============================
+missing_frac = meth.isna().mean(axis=1)
+meth = meth.loc[missing_frac <= 0.20]
+print(f"🧹 After CpG missing-value filter: {meth.shape}")
+
+# =============================
+# Step 2: Impute remaining NaNs (row median)
+# =============================
+meth = meth.apply(lambda row: row.fillna(row.median()), axis=1)
+print("🧬 Missing values imputed using CpG-wise median")
+
+# =============================
+# Step 3: Variance filtering (top 25%)
+# =============================
+variances = meth.var(axis=1)
+threshold = variances.quantile(0.75)
+meth = meth.loc[variances >= threshold]
+print(f"📉 After variance filtering: {meth.shape}")
+
+# =============================
+# Save cleaned methylation
+# =============================
+OUT_PATH = os.path.join(RESULTS_DIR, "methylation_cleaned.csv")
+meth.to_csv(OUT_PATH)
+
+print("✅ Cleaned methylation saved to:")
+print(OUT_PATH)
+
+import pandas as pd
+import os
+
+# ---------------- Base paths ----------------
+BASE_DIR = os.path.abspath("..")
+
+PCA_PATH = os.path.join(BASE_DIR, "results", "pca_coordinates.csv")
+CLINICAL_PATH = os.path.join(BASE_DIR, "dataset", "clinical")
+
+# ---------------- Load PCA ----------------
+pca = pd.read_csv(PCA_PATH)
+print("✅ Loaded PCA:", pca.shape)
+
+# Fix index column
+pca = pca.rename(columns={"Unnamed: 0": "sample_id"})
+pca["patient_id"] = pca["sample_id"].str[:12]
+
+# ---------------- Load clinical ----------------
+clinical = pd.read_csv(CLINICAL_PATH, sep="\t")
+print("✅ Loaded clinical:", clinical.shape)
+
+clinical["patient_id"] = clinical["sampleID"].str[:12]
+
+# ---------------- Merge ----------------
+merged = pd.merge(
+    pca,
+    clinical,
+    on="patient_id",
+    how="inner"
+)
+
+print("🔗 Merged PCA + clinical:", merged.shape)
+
+# ---------------- Save ----------------
+OUT_PATH = os.path.join(BASE_DIR, "results", "pca_with_clinical.csv")
+merged.to_csv(OUT_PATH, index=False)
+
+print("📁 Saved merged file to:")
+print(OUT_PATH)
+
+import pandas as pd
+
+# ==============================
+# Paths
+# ==============================
+TCGA_PATH = "../results/tcga_test_predictions.csv"
+GEO_PATH = "../results/geo_predictions.csv"
+
+# ==============================
+# Load predictions
+# ==============================
+tcga = pd.read_csv(TCGA_PATH)
+geo = pd.read_csv(GEO_PATH)
+
+print("📄 TCGA columns:", tcga.columns.tolist())
+print("📄 GEO columns:", geo.columns.tolist())
+
+# ==============================
+# TCGA Prediction Distribution
+# ==============================
+tcga_counts = (
+    tcga["Predicted_Label"]
+    .value_counts(normalize=True)
+    * 100
+)
+
+# ==============================
+# GEO Prediction Distribution
+# ==============================
+geo_counts = (
+    geo["Prediction"]
+    .value_counts(normalize=True)
+    * 100
+)
+
+# ==============================
+# Combine results
+# ==============================
+enrichment = pd.DataFrame({
+    "TCGA (%)": tcga_counts,
+    "GEO (%)": geo_counts
+}).fillna(0)
+
+print("\n📊 Prediction Enrichment Comparison (%)")
+print(enrichment)
+
+# ==============================
+# Save results
+# ==============================
+enrichment.to_csv("../results/prediction_enrichment.csv")
+print("💾 Saved → prediction_enrichment.csv")
+
+import pandas as pd
+import numpy as np
+
+meth = pd.read_csv("../results/methylation_cleaned.csv", index_col=0)
+
+# Variance across samples
+variances = meth.var(axis=1)
+
+top_cpgs = variances.sort_values(ascending=False).head(200).index
+
+meth_top = meth.loc[top_cpgs]
+
+meth_top.to_csv("../results/methylation_top200.csv")
+
+print("✅ Selected top 200 CpGs")
